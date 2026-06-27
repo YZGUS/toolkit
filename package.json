@@ -1,0 +1,32 @@
+{
+  "name": "@cengyi/toolkit",
+  "version": "0.1.0",
+  "description": "封装各种自动化工具的工具集（浏览器自动化、AI Web 集成等）",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "start-debug-chrome": "./bin/start-debug-chrome.sh",
+    "grok-ask": "./bin/grok-ask.mjs"
+  },
+  "scripts": {
+    "start-chrome": "./bin/start-debug-chrome.sh",
+    "grok": "node ./bin/grok-ask.mjs",
+    "check-ip": "node ./examples/check-ip.mjs",
+    "test:multi-site": "node ./examples/multi-site-test.mjs"
+  },
+  "keywords": [
+    "puppeteer",
+    "chrome",
+    "automation",
+    "grok",
+    "toolkit"
+  ],
+  "author": "cengyi",
+  "license": "MIT",
+  "dependencies": {
+    "puppeteer-core": "^25.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
