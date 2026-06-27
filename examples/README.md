@@ -14,11 +14,14 @@ examples/
 │   ├── multi-turn.mjs     #   多轮对话最小示例
 │   ├── long-conversation.mjs # 长上下文记忆测试（4 轮渐进校验）
 │   └── resume.mjs         #   持久化会话 URL，跨进程续接
-└── qianwen/               # 千问对话相关
-    ├── multi-turn.mjs     #   多轮对话最小示例
-    ├── research.mjs       #   研究模式（每天 10 次）
-    ├── task.mjs           #   任务助理模式（每天 20 次）
-    └── modes-test.mjs     #   4 种模式（default/think/task/research）完整回归
+├── qianwen/               # 千问对话相关
+│   ├── multi-turn.mjs     #   多轮对话最小示例
+│   ├── research.mjs       #   研究模式（每天 10 次）
+│   ├── task.mjs           #   任务助理模式（每天 20 次）
+│   └── modes-test.mjs     #   4 种模式（default/think/task/research）完整回归
+└── chatgpt/               # ChatGPT Images 2.0 生图
+    ├── text-to-image.mjs  #   纯文本生图
+    └── image-to-image.mjs #   参考图生图（image-to-image）
 ```
 
 ## 运行方式
@@ -47,6 +50,11 @@ node examples/grok/long-conversation.mjs
 node examples/grok/resume.mjs "我叫小明"
 node examples/grok/resume.mjs "我刚才说我叫什么？"
 node examples/grok/resume.mjs --reset "开新话题"
+
+# ChatGPT Images 2.0 生图（每个 plan 都有每日免费额度）
+node examples/chatgpt/text-to-image.mjs                                    # 用默认 prompt
+node examples/chatgpt/text-to-image.mjs "a serene mountain lake at dawn"
+node examples/chatgpt/image-to-image.mjs ./me.jpg "把我变成宫崎骏风格"
 ```
 
 前置条件：调试 Chrome 已通过 `bin/start-debug-chrome.sh` 启动，且对应站点已登录（`node bin/login-helper.mjs <site>`）。

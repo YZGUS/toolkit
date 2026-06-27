@@ -5,6 +5,7 @@
 - **chrome**：连接真实 Chrome 进程（保留登录态），支持 Cookie 在线同步
 - **grok**：Grok Web 对话自动化
 - **qianwen**：千问（qianwen.com）Web 对话自动化，支持 **任务助理 / 研究 / 思考** 模式
+- **chatgpt**：ChatGPT Images 2.0 生图自动化（每日免费额度），支持纯文本生图 + 参考图生图
 - **utils**：通用工具（DOM 稳定等待、SPA 渲染等待）
 
 ## 目录结构
@@ -17,7 +18,8 @@ toolkit/
 │   ├── login-helper.mjs        # 在副本里打开登录页，手动登录一次
 │   ├── check-logins.mjs        # 检测各站点登录态
 │   ├── grok-ask.mjs            # Grok CLI
-│   └── qianwen-ask.mjs         # 千问 CLI
+│   ├── qianwen-ask.mjs         # 千问 CLI
+│   └── chatgpt-image.mjs       # ChatGPT 生图 CLI
 ├── src/
 │   ├── index.js                # 统一入口
 │   ├── chrome/
@@ -27,6 +29,8 @@ toolkit/
 │   │   └── client.mjs          # Grok 对话客户端
 │   ├── qianwen/
 │   │   └── client.mjs          # 千问对话客户端
+│   ├── chatgpt/
+│   │   └── image-client.mjs    # ChatGPT Images 2.0 生图客户端
 │   └── utils/
 │       └── wait.mjs            # 等待工具
 └── examples/                          # 示例 & 测试用例（见 examples/README.md）
