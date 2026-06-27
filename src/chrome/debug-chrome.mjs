@@ -67,17 +67,6 @@ export function killDebugChrome(debugProfile = DEFAULT_DEBUG_PROFILE) {
 }
 
 /**
- * @deprecated 旧 API，会无差别杀掉所有 Chrome（含真实 Chrome），新代码请用 killDebugChrome
- */
-export function killAllChrome() {
-  try {
-    execSync('pkill -9 -f "Google Chrome"', { stdio: 'ignore' });
-  } catch {
-    /* 没进程也算正常 */
-  }
-}
-
-/**
  * 复制真实 profile 到调试副本目录
  */
 export function copyProfile({
@@ -107,13 +96,14 @@ export function cleanLockFiles(debugProfile = DEFAULT_DEBUG_PROFILE) {
 /**
  * 启动带调试端口的 Chrome（使用副本 profile）
  *
- * 重要：Chrome 127+ 启用了 App-Bound Encryption (ABE)：
- * - Cookies/Login Data 用绑定到 profile **绝对路径**的密钥加密（v20 前缀）
- * - 把真实 profile 复制到 ~/chrome-debug-profile/ 后，路径变了 → 密钥不一致 → cookie 解不开
- * - 表现：副本里所有站点都需要重新登录
- *
- * 缓解：通过 --disable-features 尽可能关闭 ABE，让旧的 v10 cookie 仍能解密
- * 终极方案：接受副本是"独立浏览器"，在副本里手动登录一次即可（之后永久工作）
+ * 重要细节：
+ * 1. Chrome 127+ App-Bound Encryption：Cookies 用绑定 profile 绝对路径的密钥加密。
+ *    复制到副本后真实 profile 的 v20 cookie 解不开，因此登录必须在副本里完成一次
+ *    （见 docs/chrome.md）。--disable-features=LockProfileCookieDatabase 让旧 v10
+ *    cookie 仍可读，是尽力而为的兼容。
+ * 2. 反自动化指纹：navigator.webdriver 等特征用 --disable-blink-features=
+ *    AutomationControlled 关闭。注意「受自动测试软件控制」横幅由 --enable-automation
+ *    触发，本模块用 spawn 直接启动 Chrome、从不加该开关，所以不会出现该横幅。
  */
 export async function launchDebugChrome({
   chromePath = DEFAULT_CHROME_PATH,
@@ -122,6 +112,7 @@ export async function launchDebugChrome({
   extraArgs = [],
   waitMs = 20000,
   disableAbe = true,
+  hideAutomation = true,
 } = {}) {
   cleanLockFiles(debugProfile);
 
@@ -132,9 +123,12 @@ export async function launchDebugChrome({
     '--no-default-browser-check',
   ];
 
+  if (hideAutomation) {
+    args.push('--disable-blink-features=AutomationControlled');
+  }
+
   if (disableAbe) {
-    // 尝试关闭 App-Bound Encryption 相关 feature，让 v10 cookie 仍可用
-    args.push('--disable-features=LockProfileCookieDatabase,EncryptedClientHello');
+    args.push('--disable-features=LockProfileCookieDatabase');
   }
 
   args.push(...extraArgs);
@@ -152,19 +146,22 @@ export async function launchDebugChrome({
 }
 
 /**
- * 一键确保调试 Chrome 可用：检测 → 选择性 kill 残留副本进程 → 复制/同步 → 启动
+ * 一键确保调试 Chrome 可用：检测 → 选择性 kill 残留副本进程 → 首次复制 → 启动
+ *
+ * 重要：副本一旦在调试 Chrome 里登录过，登录态就持久保存在副本里
+ * （见 docs/chrome.md）。因此这里**不再**从真实 profile 同步 cookie——
+ * 同步只会用解不开的 v20 cookie 覆盖副本、把登录态冲掉。只有副本不存在时
+ * 才首次复制一份做引导。
  *
  * @param {object} options
  * @param {string}  options.realProfile      真实 profile 路径
  * @param {string}  options.debugProfile     调试副本路径
  * @param {number}  options.port             调试端口
- * @param {'auto'|boolean} options.refreshCookies  复用已存在副本时是否刷新 cookie（默认 'auto'：副本存在就刷新）
  */
 export async function ensureDebugChrome(options = {}) {
   const port = options.port ?? DEFAULT_DEBUG_PORT;
   const realProfile = options.realProfile ?? DEFAULT_REAL_PROFILE;
   const debugProfile = options.debugProfile ?? DEFAULT_DEBUG_PROFILE;
-  const refreshCookies = options.refreshCookies ?? 'auto';
 
   if (await isDebugPortOpen(port)) {
     return { reused: true, info: await getBrowserInfo(port) };
@@ -174,109 +171,9 @@ export async function ensureDebugChrome(options = {}) {
   killDebugChrome(debugProfile);
   await new Promise(r => setTimeout(r, 1000));
 
-  const profileExisted = fs.existsSync(debugProfile);
+  // 副本不存在才首次复制；已存在则原样复用，保住已登录的副本 cookie
   copyProfile({ realProfile, debugProfile });
-
-  // 副本已存在时按需同步 Cookie（拿到真实 Chrome 最新登录态）
-  if (profileExisted && refreshCookies !== false) {
-    try {
-      const result = syncCookies({ realProfile, debugProfile });
-      if (result.synced.length > 0) {
-        console.log(`[toolkit] Cookie 同步: ${result.synced.join(', ')}`);
-      }
-    } catch (err) {
-      console.warn(`[toolkit] Cookie 同步失败（继续启动）: ${err.message}`);
-    }
-  }
 
   const info = await launchDebugChrome({ ...options, debugProfile, port });
   return { reused: false, info };
-}
-
-/**
- * 同步真实 profile 的 Cookie 到副本（差量 + SQLite 在线备份）
- *
- * 真实 Chrome 可以仍在运行：
- * - SQLite 文件用 `sqlite3 .backup` 拿事务一致快照
- * - 其他文件用 rsync 复制，接受最终一致
- *
- * @param {object} options
- * @param {boolean} options.includeLoginData  是否同步保存的密码（默认 false，加密 key 跨副本可能失效）
- * @returns {{synced: string[], skipped: string[]}}
- */
-export function syncCookies({
-  realProfile = DEFAULT_REAL_PROFILE,
-  debugProfile = DEFAULT_DEBUG_PROFILE,
-  includeLoginData = false,
-} = {}) {
-  const synced = [];
-  const skipped = [];
-
-  const realDefault = path.join(realProfile, 'Default');
-  const debugDefault = path.join(debugProfile, 'Default');
-
-  if (!fs.existsSync(realDefault)) {
-    return { synced, skipped: ['real profile Default 不存在'] };
-  }
-  if (!fs.existsSync(debugDefault)) {
-    fs.mkdirSync(debugDefault, { recursive: true });
-  }
-
-  // SQLite 文件：用 .backup 在线备份
-  const sqliteFiles = ['Cookies'];
-  if (includeLoginData) sqliteFiles.push('Login Data');
-
-  for (const name of sqliteFiles) {
-    const src = path.join(realDefault, name);
-    const dest = path.join(debugDefault, name);
-    if (!fs.existsSync(src)) {
-      skipped.push(name);
-      continue;
-    }
-    try {
-      execSync(`sqlite3 "${src}" ".backup '${dest}'"`, { stdio: 'ignore' });
-      synced.push(name);
-    } catch (err) {
-      // 兜底：sqlite3 不可用或 src 被独占 → 直接 rsync
-      try {
-        execSync(`rsync -a "${src}" "${dest}"`, { stdio: 'ignore' });
-        synced.push(`${name} (rsync fallback)`);
-      } catch {
-        skipped.push(`${name}: ${err.message}`);
-      }
-    }
-  }
-
-  // 普通文件/目录：直接 rsync
-  const plainPaths = [
-    'Local Storage/',
-    'IndexedDB/',
-  ];
-  for (const rel of plainPaths) {
-    const src = path.join(realDefault, rel);
-    if (!fs.existsSync(src)) {
-      skipped.push(rel);
-      continue;
-    }
-    try {
-      execSync(`rsync -a "${src}" "${path.join(debugDefault, rel)}"`, { stdio: 'ignore' });
-      synced.push(rel);
-    } catch (err) {
-      skipped.push(`${rel}: ${err.message}`);
-    }
-  }
-
-  // Local State 在 profile 根目录，含 Cookie 加密 key
-  const localStateSrc = path.join(realProfile, 'Local State');
-  const localStateDest = path.join(debugProfile, 'Local State');
-  if (fs.existsSync(localStateSrc)) {
-    try {
-      execSync(`rsync -a "${localStateSrc}" "${localStateDest}"`, { stdio: 'ignore' });
-      synced.push('Local State');
-    } catch (err) {
-      skipped.push(`Local State: ${err.message}`);
-    }
-  }
-
-  return { synced, skipped };
 }

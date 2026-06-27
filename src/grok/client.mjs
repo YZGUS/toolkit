@@ -5,9 +5,61 @@
  * 前置：调试 Chrome 已启动且 grok.com 已登录。
  */
 import { connectChrome } from '../chrome/connect.mjs';
-import { waitForDomStable, waitForSpa } from '../utils/wait.mjs';
+import { waitForSpa } from '../utils/wait.mjs';
 
 const GROK_URL = 'https://grok.com';
+
+/**
+ * 在浏览器上下文里读取助手回复状态
+ *
+ * Grok 当前 DOM：
+ * - 用户气泡 [data-testid="user-message"]，助手气泡 [data-testid="assistant-message"]
+ * - 正文在助手气泡内的 .response-content-markdown（用户气泡也用同名 class，所以必须先定位助手气泡）
+ * - 思考中会出现 [data-testid="thinking-indicator"]
+ */
+function readAssistantState() {
+  const thinking = !!document.querySelector('[data-testid="thinking-indicator"]');
+  const nodes = [...document.querySelectorAll('[data-testid="assistant-message"]')];
+  const node = nodes[nodes.length - 1];
+  let text = '';
+  if (node) {
+    const md = node.querySelector('.response-content-markdown');
+    text = ((md || node).textContent || '').trim();
+  }
+  return { thinking, text, count: nodes.length };
+}
+
+/** 当前助手气泡数量（发送前作为基线，避免多轮时读到上一轮回复） */
+function countAssistantMessages(page) {
+  return page.evaluate(() => document.querySelectorAll('[data-testid="assistant-message"]').length);
+}
+
+/**
+ * 等待 Grok 助手回复完成：出现新助手气泡 + 思考指示器消失 + 正文非空且连续稳定
+ *
+ * @param {number} baselineCount  发送前的助手气泡数，必须等到数量增加才算新回复
+ * @returns {Promise<string>} 助手回复纯文本
+ */
+async function waitForGrokReply(page, { timeoutMs = 180000, stableMs = 3000, pollMs = 1000, baselineCount = 0 } = {}) {
+  const start = Date.now();
+  let lastText = null;
+  let stableStart = null;
+
+  while (Date.now() - start < timeoutMs) {
+    const { thinking, text, count } = await page.evaluate(readAssistantState);
+    const settled = count > baselineCount && !thinking && text.length > 0;
+
+    if (settled && text === lastText) {
+      if (stableStart === null) stableStart = Date.now();
+      if (Date.now() - stableStart >= stableMs) return text;
+    } else {
+      stableStart = null;
+      lastText = settled ? text : null;
+    }
+    await new Promise(r => setTimeout(r, pollMs));
+  }
+  return lastText ?? '';
+}
 
 /**
  * 向 Grok 发起单轮对话
@@ -57,31 +109,13 @@ export async function askGrok(message, options = {}) {
     await page.keyboard.type(message);
     if (screenshot) await page.screenshot({ path: 'grok-input.png' });
 
+    const baselineCount = await countAssistantMessages(page);
     await page.keyboard.press('Enter');
 
-    // 等待回复（DOM 稳定）
-    await waitForDomStable(page, {
-      stableMs,
-      timeoutMs: waitTimeoutMs,
-    });
+    // 等待助手回复完成并提取
+    const reply = await waitForGrokReply(page, { timeoutMs: waitTimeoutMs, stableMs, baselineCount });
 
     if (screenshot) await page.screenshot({ path: 'grok-reply.png', fullPage: true });
-
-    // 提取最新回复
-    const reply = await page.evaluate(() => {
-      // 优先策略：article 标签
-      const articles = document.querySelectorAll('article');
-      if (articles.length > 0) {
-        return articles[articles.length - 1].textContent.trim();
-      }
-      // 兜底：role=assistant
-      const msgs = document.querySelectorAll('[data-message-role="assistant"], [role="assistant"]');
-      if (msgs.length > 0) {
-        return msgs[msgs.length - 1].textContent.trim();
-      }
-      // 最终兜底
-      return document.body.innerText.slice(-2000);
-    });
 
     return { reply, url: page.url() };
   } finally {
@@ -137,15 +171,11 @@ export async function createGrokChat(options = {}) {
       });
       if (!ok) throw new Error('找不到输入框');
 
+      const baselineCount = await countAssistantMessages(page);
       await page.keyboard.type(message);
       await page.keyboard.press('Enter');
 
-      await waitForDomStable(page, { stableMs, timeoutMs: waitTimeoutMs });
-
-      return page.evaluate(() => {
-        const articles = document.querySelectorAll('article');
-        return articles[articles.length - 1]?.textContent?.trim() ?? '';
-      });
+      return waitForGrokReply(page, { timeoutMs: waitTimeoutMs, stableMs, baselineCount });
     },
     async close() {
       await page.close();

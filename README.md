@@ -14,6 +14,8 @@ toolkit/
 ├── package.json
 ├── bin/                        # 可执行脚本
 │   ├── start-debug-chrome.sh   # 一键启动带调试端口的 Chrome
+│   ├── login-helper.mjs        # 在副本里打开登录页，手动登录一次
+│   ├── check-logins.mjs        # 检测各站点登录态
 │   ├── grok-ask.mjs            # Grok CLI
 │   └── qianwen-ask.mjs         # 千问 CLI
 ├── src/
@@ -55,12 +57,17 @@ npm install
 ### 1. 启动调试 Chrome（首次会自动复制真实 profile）
 
 ```bash
-./bin/start-debug-chrome.sh              # 启动；副本已存在则自动同步 cookie
-./bin/start-debug-chrome.sh --no-sync    # 跳过 cookie 同步
-./bin/start-debug-chrome.sh --rebuild    # 强制重建副本
+./bin/start-debug-chrome.sh              # 启动；副本已存在则原样复用
+./bin/start-debug-chrome.sh --rebuild    # 删除副本并重建（需重新登录）
+
+# 首次使用：在副本里登录一次（永久保留）
+node bin/login-helper.mjs qianwen grok github
+node bin/check-logins.mjs                 # 验证登录态
 ```
 
 > 真实 Chrome 可以**继续运行**——脚本只会关闭使用副本目录的进程，不再误杀真实 Chrome。
+>
+> 📖 启动原理 / 登录态 / 排错详见 **[docs/chrome.md](./docs/chrome.md)**。
 
 ### 2. CLI 提问
 
@@ -152,17 +159,16 @@ DevTools remote debugging requires a non-default data directory.
 
 **心智模型**：把调试 Chrome 当成"自动化专用的独立浏览器"，与日常 Chrome 完全隔离。这是 Playwright / browserless 等业界项目的标准做法。
 
-### Cookie 在线同步（仅对 v10 cookie 有效）
+### 登录态：副本登录一次即永久保留（不再同步 cookie）
 
-`ensureDebugChrome()` / `start-debug-chrome.sh` 在副本已存在时会自动：
+由于 ABE 限制（见上），真实 profile 的 `v20` cookie 在副本里解不开，**同步 cookie 只会把副本里已登好的登录态冲掉**。因此 toolkit 的策略是：
 
-- **SQLite 在线备份**：用 `sqlite3 .backup` 把 `Default/Cookies` 拷到副本，真实 Chrome 在跑也能拿到事务一致的快照
-- **普通文件 rsync**：`Local Storage/`、`IndexedDB/`、`Local State`（含 Cookie 加密 key）
-- **选择性 kill**：只杀使用副本目录的残留 Chrome（`pkill -f "user-data-dir=$DEBUG_PROFILE"`），不再无差别屠杀真实 Chrome
+- **副本不存在** → 首次复制一份做引导
+- **副本已存在** → 原样复用，**绝不覆盖** cookie
+- **选择性 kill**：只杀使用副本目录的残留 Chrome（`pkill -f "user-data-dir=$DEBUG_PROFILE"`），不动真实 Chrome
+- 需要刷新登录态时，自己 `node bin/login-helper.mjs <site>` 重新登一次
 
-⚠️ 由于 ABE 限制，同步对 `v20`（Chrome 127+ 写入）cookie 无效，仅作为兼容旧 cookie 的尽力而为措施。**新站点登录必须在副本里完成。**
-
-依赖：`sqlite3` CLI（macOS 自带）。
+> 完整说明见 **[docs/chrome.md](./docs/chrome.md)**。
 
 ### connect vs launch
 
@@ -250,6 +256,7 @@ node examples/grok/resume.mjs "我叫小明"
 
 ## 文档
 
+- **[docs/chrome.md](./docs/chrome.md)** — 启动调试 Chrome / 登录态 / 排错（强烈建议先读）
 - **[examples/README.md](./examples/README.md)** — 示例索引、运行方式、编写规范（新增 example 前请先读）
 - **Obsidian Vault**（详细原理 & 排错笔记）：
 

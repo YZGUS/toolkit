@@ -5,9 +5,12 @@
 # 已验证：macOS + Chrome 149+
 #
 # 用法：
-#   ./start-debug-chrome.sh              # 启动；副本已存在则同步 cookie
-#   ./start-debug-chrome.sh --no-sync    # 启动但跳过 cookie 同步
-#   ./start-debug-chrome.sh --rebuild    # 删除副本并重建（适合副本损坏）
+#   ./start-debug-chrome.sh              # 启动调试 Chrome（首次自动复制真实 profile）
+#   ./start-debug-chrome.sh --rebuild    # 删除副本并重建（适合副本损坏 / 需要重新登录）
+#
+# 说明：副本一旦登录过，登录态就持久保存在副本里，不需要、也不应该再从真实
+#       profile 同步 cookie（v20 cookie 跨路径解不开，同步只会把登录态冲掉）。
+#       详见 docs/chrome.md。
 
 set -e
 
@@ -16,11 +19,9 @@ REAL_PROFILE="$HOME/Library/Application Support/Google/Chrome"
 DEBUG_PROFILE="${TOOLKIT_DEBUG_PROFILE:-$HOME/chrome-debug-profile}"
 DEBUG_PORT="${TOOLKIT_DEBUG_PORT:-9222}"
 
-NO_SYNC=0
 REBUILD=0
 for arg in "$@"; do
   case "$arg" in
-    --no-sync) NO_SYNC=1 ;;
     --rebuild) REBUILD=1 ;;
   esac
 done
@@ -49,33 +50,20 @@ if [ ! -d "$DEBUG_PROFILE" ]; then
   echo "📦 首次复制真实 profile 到 $DEBUG_PROFILE（可能 1-3 分钟）..."
   rsync -a --exclude='Singleton*' "$REAL_PROFILE/" "$DEBUG_PROFILE/"
   echo "✅ 复制完成: $(du -sh "$DEBUG_PROFILE" | cut -f1)"
-elif [ $NO_SYNC -eq 0 ]; then
-  echo "🔄 副本已存在，同步真实 profile 的 Cookie / Local Storage..."
-  # SQLite 在线备份：真实 Chrome 在跑也能拿到一致快照
-  if [ -f "$REAL_PROFILE/Default/Cookies" ]; then
-    sqlite3 "$REAL_PROFILE/Default/Cookies" ".backup '$DEBUG_PROFILE/Default/Cookies'" 2>/dev/null \
-      || rsync -a "$REAL_PROFILE/Default/Cookies" "$DEBUG_PROFILE/Default/" 2>/dev/null \
-      || true
-  fi
-  [ -d "$REAL_PROFILE/Default/Local Storage" ] && \
-    rsync -a "$REAL_PROFILE/Default/Local Storage/" "$DEBUG_PROFILE/Default/Local Storage/" 2>/dev/null || true
-  [ -d "$REAL_PROFILE/Default/IndexedDB" ] && \
-    rsync -a "$REAL_PROFILE/Default/IndexedDB/" "$DEBUG_PROFILE/Default/IndexedDB/" 2>/dev/null || true
-  [ -f "$REAL_PROFILE/Local State" ] && \
-    rsync -a "$REAL_PROFILE/Local State" "$DEBUG_PROFILE/Local State" 2>/dev/null || true
-  echo "✅ Cookie 同步完成"
+  echo "ℹ️  首次启动后请用 node bin/login-helper.mjs <site> 在副本里登录一次（永久保留）"
 fi
 
 rm -f "$DEBUG_PROFILE/Singleton"* 2>/dev/null || true
 
 echo "🚀 启动 Chrome（调试端口 $DEBUG_PORT）..."
-# Chrome 127+ 的 App-Bound Encryption 会让跨路径复制的 cookie 失效
-# 通过 --disable-features 关闭 LockProfileCookieDatabase，让仍是 v10 的 cookie 可用
-# 仍然 v20 加密的 cookie 副本里读不出，需在副本里手动登录一次
+# 关键 flag：
+# - --disable-blink-features=AutomationControlled：关闭 navigator.webdriver 指纹
+# - --disable-features=LockProfileCookieDatabase：让跨路径副本仍能读旧 v10 cookie
 "$CHROME_PATH" \
   --remote-debugging-port=$DEBUG_PORT \
   --user-data-dir="$DEBUG_PROFILE" \
-  --disable-features=LockProfileCookieDatabase,EncryptedClientHello \
+  --disable-blink-features=AutomationControlled \
+  --disable-features=LockProfileCookieDatabase \
   --no-first-run \
   --no-default-browser-check \
   > /dev/null 2>&1 &
