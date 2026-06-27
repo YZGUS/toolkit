@@ -14,7 +14,7 @@ const GROK_URL = 'https://grok.com';
  *
  * @param {string} message       用户消息
  * @param {object} options
- * @param {number} options.waitTimeoutMs    等待回复最大时长（默认 90s）
+ * @param {number} options.waitTimeoutMs    等待回复最大时长（默认 180s）
  * @param {number} options.stableMs          DOM 稳定阈值（默认 3000ms）
  * @param {boolean} options.screenshot      是否截图（保存到当前目录）
  * @param {boolean} options.newChat          是否强制新建会话（默认 true）
@@ -22,7 +22,7 @@ const GROK_URL = 'https://grok.com';
  */
 export async function askGrok(message, options = {}) {
   const {
-    waitTimeoutMs = 90000,
+    waitTimeoutMs = 180000,
     stableMs = 3000,
     screenshot = false,
     newChat = true,
@@ -124,7 +124,7 @@ export async function createGrokChat(options = {}) {
     },
     async send(message, sendOptions = {}) {
       const {
-        waitTimeoutMs = 90000,
+        waitTimeoutMs = 180000,
         stableMs = 3000,
       } = sendOptions;
 

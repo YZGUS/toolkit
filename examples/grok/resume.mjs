@@ -6,14 +6,14 @@
  * - 后续运行：自动读取 URL 续接同一会话（Grok 服务端记忆仍在）
  *
  * 用法：
- *   node examples/grok-resume.mjs "我叫小明，喜欢编程"
- *   node examples/grok-resume.mjs "我刚才说我叫什么？"     # 应能答出"小明"
- *   node examples/grok-resume.mjs --reset "新话题"          # 丢弃旧会话重开
+ *   node examples/grok/resume.mjs "我叫小明，喜欢编程"
+ *   node examples/grok/resume.mjs "我刚才说我叫什么？"     # 应能答出"小明"
+ *   node examples/grok/resume.mjs --reset "新话题"          # 丢弃旧会话重开
  */
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createGrokChat } from '../src/grok/client.mjs';
+import { createGrokChat } from '../../src/grok/client.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SESSION_FILE = join(__dirname, '.grok-session.json');

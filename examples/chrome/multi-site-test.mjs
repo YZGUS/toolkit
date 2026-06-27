@@ -2,7 +2,7 @@
 /**
  * 示例：多站点登录态验证
  */
-import { connectChrome } from '../src/chrome/connect.mjs';
+import { connectChrome } from '../../src/chrome/connect.mjs';
 
 const { browser } = await connectChrome();
 const page = await browser.newPage();

@@ -2,7 +2,7 @@
 /**
  * 示例：检测 Chrome 出口 IP（验证代理/虚拟网卡是否生效）
  */
-import { withPage } from '../src/chrome/connect.mjs';
+import { withPage } from '../../src/chrome/connect.mjs';
 
 const checkSites = [
   'https://api.ip.sb/geoip',

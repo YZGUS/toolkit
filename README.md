@@ -27,15 +27,20 @@ toolkit/
 │   │   └── client.mjs          # 千问对话客户端
 │   └── utils/
 │       └── wait.mjs            # 等待工具
-└── examples/
-    ├── check-ip.mjs                  # 检测 Chrome 出口 IP
-    ├── multi-site-test.mjs           # 多站点登录态验证
-    ├── grok-multi-turn.mjs           # Grok 多轮对话
-    ├── grok-long-conversation.mjs    # Grok 长上下文记忆测试
-    ├── grok-resume.mjs               # Grok 可恢复会话
-    ├── qianwen-multi-turn.mjs        # 千问多轮对话
-    ├── qianwen-research.mjs          # 千问研究模式（每天 10 次）
-    └── qianwen-task.mjs              # 千问任务助理（每天 20 次）
+└── examples/                          # 示例 & 测试用例（见 examples/README.md）
+    ├── README.md                      # 运行方式与编写规范
+    ├── chrome/                        # Chrome 连接 / 登录态
+    │   ├── check-ip.mjs
+    │   └── multi-site-test.mjs
+    ├── grok/                          # Grok 对话
+    │   ├── multi-turn.mjs
+    │   ├── long-conversation.mjs
+    │   └── resume.mjs
+    └── qianwen/                       # 千问对话
+        ├── multi-turn.mjs
+        ├── research.mjs               # 研究模式（每天 10 次）
+        ├── task.mjs                   # 任务助理（每天 20 次）
+        └── modes-test.mjs             # 4 模式回归
 ```
 
 ## 安装
@@ -122,17 +127,42 @@ DevTools remote debugging requires a non-default data directory.
 
 这是 Chromium 源码里的硬性检查（`remote_debugging_server.cc`），命令行/链接/挂载均无法绕过，只能用非默认目录。
 
-解决方案：把真实 profile **完整复制**到 `~/chrome-debug-profile`（含所有 Cookie 和登录态），Chrome 视为"非默认目录"允许调试端口。
+解决方案：把真实 profile 复制到 `~/chrome-debug-profile`（含 Cookie / Local Storage / IndexedDB），Chrome 视为"非默认目录"允许调试端口。
 
-### Cookie 在线同步（真实 Chrome 不需要关闭）
+### ⚠️ Chrome 127+ App-Bound Encryption (ABE) 的影响
 
-副本是首次创建时的快照，之后真实 Chrome 在用的过程中登录的新站点不会自动出现在副本。`ensureDebugChrome()` / `start-debug-chrome.sh` 在副本已存在时会自动：
+**Chrome 127（2024 年 7 月）起对 Cookie 启用 App-Bound Encryption**：
 
-- **SQLite 在线备份**：用 `sqlite3 .backup` 命令把 `Default/Cookies` 拷到副本，真实 Chrome 在跑也能拿到事务一致的快照
+- 新写入的 Cookie value 用前缀 `v20`，密钥派生**绑定 profile 绝对路径 + 应用签名**
+- 把真实 profile 复制到副本目录后：路径变了 → 密钥不一致 → `v20` cookie **解不开**
+- 表现：副本里所有站点都需要重新登录，**复制 cookie 看似成功实则失效**
+
+**toolkit 的应对**：
+
+1. 启动调试 Chrome 时加 `--disable-features=LockProfileCookieDatabase` —— 让旧的 `v10` cookie 仍可解密（部分站点）
+2. 对 `v20` cookie 不再尝试同步，改为提供**登录辅助工具**：
+
+   ```bash
+   # 在调试 Chrome 中打开常用站点的登录页，手动登录一次（永久保留）
+   node bin/login-helper.mjs                       # 全部
+   node bin/login-helper.mjs qianwen grok          # 指定
+   ```
+
+3. 在调试 Chrome 里登录一次后，cookie 用**副本路径派生的新密钥**加密，存到 `~/chrome-debug-profile/`，之后调用 toolkit 永久保留登录态
+
+**心智模型**：把调试 Chrome 当成"自动化专用的独立浏览器"，与日常 Chrome 完全隔离。这是 Playwright / browserless 等业界项目的标准做法。
+
+### Cookie 在线同步（仅对 v10 cookie 有效）
+
+`ensureDebugChrome()` / `start-debug-chrome.sh` 在副本已存在时会自动：
+
+- **SQLite 在线备份**：用 `sqlite3 .backup` 把 `Default/Cookies` 拷到副本，真实 Chrome 在跑也能拿到事务一致的快照
 - **普通文件 rsync**：`Local Storage/`、`IndexedDB/`、`Local State`（含 Cookie 加密 key）
 - **选择性 kill**：只杀使用副本目录的残留 Chrome（`pkill -f "user-data-dir=$DEBUG_PROFILE"`），不再无差别屠杀真实 Chrome
 
-依赖：`sqlite3` CLI（macOS 自带）。如果不可用会自动回退到 rsync。
+⚠️ 由于 ABE 限制，同步对 `v20`（Chrome 127+ 写入）cookie 无效，仅作为兼容旧 cookie 的尽力而为措施。**新站点登录必须在副本里完成。**
+
+依赖：`sqlite3` CLI（macOS 自带）。
 
 ### connect vs launch
 
@@ -173,6 +203,34 @@ Grok 和千问的 `createXxxChat()` 都采用相同模式：
 
 调用 `askQianwen(msg, { mode: 'research' })` 或 `chat.setMode('task')` 即可。
 
+## 示例与测试
+
+所有示例集中在 [`examples/`](./examples/README.md) 下，按客户端分子目录：
+
+```
+examples/
+├── chrome/   # Chrome 连接 / 登录态
+├── grok/     # Grok 对话
+└── qianwen/  # 千问对话
+```
+
+常用入口：
+
+```bash
+# 最小示例
+node examples/grok/multi-turn.mjs
+node examples/qianwen/multi-turn.mjs
+
+# 千问 4 模式回归（--skip-quota 跳过烧额度的）
+node examples/qianwen/modes-test.mjs --skip-quota
+
+# 长上下文记忆 / 持久化会话
+node examples/grok/long-conversation.mjs
+node examples/grok/resume.mjs "我叫小明"
+```
+
+> 📖 **新增示例 / 测试用例前请先阅读 [examples/README.md](./examples/README.md)**——里面有目录约定、文件头模板、CLI 参数风格、烧额度示例处理等强制规范。
+
 ## 已验证可工作
 
 - ✅ Grok Web 自动对话（单轮 / 多轮 / 恢复会话）
@@ -192,11 +250,12 @@ Grok 和千问的 `createXxxChat()` 都采用相同模式：
 
 ## 文档
 
-详细原理与排错见 Obsidian Vault：
+- **[examples/README.md](./examples/README.md)** — 示例索引、运行方式、编写规范（新增 example 前请先读）
+- **Obsidian Vault**（详细原理 & 排错笔记）：
 
-```
-~/Documents/Obsidian Vault/技术调研/爬虫与采集/Puppeteer/
-├── 索引.md
-├── Puppeteer 连接真实 Chrome.md
-└── Grok Web 自动化.md
-```
+  ```
+  ~/Documents/Obsidian Vault/技术调研/爬虫与采集/Puppeteer/
+  ├── 索引.md
+  ├── Puppeteer 连接真实 Chrome.md
+  └── Grok Web 自动化.md
+  ```

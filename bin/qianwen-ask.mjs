@@ -46,9 +46,15 @@ console.log(`⏳ 连接千问... 超时上限 ${(waitTimeoutMs ?? QIANWEN_MODES[
 
 try {
   const t0 = Date.now();
-  const { reply, url } = await askQianwen(message, { mode, screenshot, waitTimeoutMs });
+  const { reply, url, attachments } = await askQianwen(message, { mode, screenshot, waitTimeoutMs });
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
   console.log(`\n🤖 千问 (${elapsed}s):\n${reply}`);
+  if (attachments && attachments.length > 0) {
+    console.log(`\n📎 生成附件:`);
+    for (const a of attachments) {
+      console.log(`   - ${a.name} (${a.size}, ${a.type})`);
+    }
+  }
   console.log(`\n📎 会话 URL: ${url}`);
 } catch (err) {
   console.error(`\n❌ 错误: ${err.message}`);

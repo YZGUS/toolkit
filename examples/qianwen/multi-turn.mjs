@@ -2,7 +2,7 @@
 /**
  * 示例：千问多轮对话
  */
-import { createQianwenChat } from '../src/qianwen/client.mjs';
+import { createQianwenChat } from '../../src/qianwen/client.mjs';
 
 const chat = await createQianwenChat();
 

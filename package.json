@@ -11,8 +11,8 @@
   "scripts": {
     "start-chrome": "./bin/start-debug-chrome.sh",
     "grok": "node ./bin/grok-ask.mjs",
-    "check-ip": "node ./examples/check-ip.mjs",
-    "test:multi-site": "node ./examples/multi-site-test.mjs"
+    "check-ip": "node ./examples/chrome/check-ip.mjs",
+    "test:multi-site": "node ./examples/chrome/multi-site-test.mjs"
   },
   "keywords": [
     "puppeteer",

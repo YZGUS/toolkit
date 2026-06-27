@@ -6,9 +6,9 @@
  * Grok 能否记住前几轮注入的信息（上下文保持）。
  *
  * 用法：
- *   node examples/grok-long-conversation.mjs
+ *   node examples/grok/long-conversation.mjs
  */
-import { createGrokChat } from '../src/grok/client.mjs';
+import { createGrokChat } from '../../src/grok/client.mjs';
 
 const TURNS = [
   {

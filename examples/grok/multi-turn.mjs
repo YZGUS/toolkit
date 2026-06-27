@@ -2,7 +2,7 @@
 /**
  * 示例：Grok 多轮对话
  */
-import { createGrokChat } from '../src/grok/client.mjs';
+import { createGrokChat } from '../../src/grok/client.mjs';
 
 const chat = await createGrokChat();
 

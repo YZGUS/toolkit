@@ -106,6 +106,14 @@ export function cleanLockFiles(debugProfile = DEFAULT_DEBUG_PROFILE) {
 
 /**
  * 启动带调试端口的 Chrome（使用副本 profile）
+ *
+ * 重要：Chrome 127+ 启用了 App-Bound Encryption (ABE)：
+ * - Cookies/Login Data 用绑定到 profile **绝对路径**的密钥加密（v20 前缀）
+ * - 把真实 profile 复制到 ~/chrome-debug-profile/ 后，路径变了 → 密钥不一致 → cookie 解不开
+ * - 表现：副本里所有站点都需要重新登录
+ *
+ * 缓解：通过 --disable-features 尽可能关闭 ABE，让旧的 v10 cookie 仍能解密
+ * 终极方案：接受副本是"独立浏览器"，在副本里手动登录一次即可（之后永久工作）
  */
 export async function launchDebugChrome({
   chromePath = DEFAULT_CHROME_PATH,
@@ -113,20 +121,25 @@ export async function launchDebugChrome({
   port = DEFAULT_DEBUG_PORT,
   extraArgs = [],
   waitMs = 20000,
+  disableAbe = true,
 } = {}) {
   cleanLockFiles(debugProfile);
 
-  spawn(
-    chromePath,
-    [
-      `--remote-debugging-port=${port}`,
-      `--user-data-dir=${debugProfile}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      ...extraArgs,
-    ],
-    { detached: true, stdio: 'ignore' }
-  ).unref();
+  const args = [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${debugProfile}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+  ];
+
+  if (disableAbe) {
+    // 尝试关闭 App-Bound Encryption 相关 feature，让 v10 cookie 仍可用
+    args.push('--disable-features=LockProfileCookieDatabase,EncryptedClientHello');
+  }
+
+  args.push(...extraArgs);
+
+  spawn(chromePath, args, { detached: true, stdio: 'ignore' }).unref();
 
   const start = Date.now();
   while (Date.now() - start < waitMs) {

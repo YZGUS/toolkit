@@ -28,18 +28,20 @@ const VISIBLE_CAPSULE = '[data-role="visible-capsule"]';
 
 /**
  * 已支持的对话模式与默认超时（毫秒）
- * - default  常规对话
- * - task     任务助理（每天 20 次）
- * - research 研究（每天 10 次，回复较慢且较长）
- * - think    思考（深度思考）
  *
- * 调用方可通过 options.mode 选择；默认 default。
+ * 经验值（实测调整，宁可等也别超时打断）：
+ * - default  常规对话：通常 5-30s 完成，给 180s
+ * - think    深度思考：可能 1-5 分钟（含 chain-of-thought 流式），给 360s
+ * - task     任务助理（每天 20 次）：拆解 + 多步工具调用 + 生成报告，可能 2-15 分钟，给 1200s (20 分钟)
+ * - research 研究（每天 10 次）：联网检索 + 长报告，可能 5-25 分钟，给 1800s (30 分钟)
+ *
+ * 调用方可通过 options.waitTimeoutMs 覆盖。
  */
 export const QIANWEN_MODES = Object.freeze({
-  default: { label: null, defaultTimeoutMs: 120_000 },
-  task: { label: '任务助理', defaultTimeoutMs: 600_000 },
-  research: { label: '研究', defaultTimeoutMs: 900_000 },
-  think: { label: '思考', defaultTimeoutMs: 240_000 },
+  default: { label: null, defaultTimeoutMs: 180_000 },
+  task: { label: '任务助理', defaultTimeoutMs: 1_200_000 },
+  research: { label: '研究', defaultTimeoutMs: 1_800_000 },
+  think: { label: '思考', defaultTimeoutMs: 360_000 },
 });
 
 /**
@@ -166,12 +168,66 @@ async function waitForQianwenReply(page, { timeoutMs = 120000, stableMs = 3000, 
 
 /**
  * 从最后一条助手 card 提取文本
+ *
+ * 提取策略（已适配所有 4 种模式）：
+ * - default：仅 1 个 .qk-markdown，直接取
+ * - think：2 个 .qk-markdown，第一个在 [data-card_name="deep_think"] 容器内（思考过程），
+ *           需要剥离；最终答案在不带 thinking 父链的 .qk-markdown
+ * - task：1 个 .qk-markdown 含正文 + 多个 mos-agent-module 卡片（报告链接、调整按钮等），
+ *          需移除卡片装饰
+ * - research：结构与 task 类似，但 .qk-markdown 内容更长 + 含表格/列表
+ *
+ * 同时抓取附件元数据（.report-file-item，任务助理 / 研究模式生成的报告文件）。
+ *
+ * @returns {Promise<{text: string, thinking: string, attachments: Array, url: string}>}
  */
 async function extractLastReply(page) {
-  return page.evaluate(sel => {
-    const cards = document.querySelectorAll(sel);
-    if (cards.length === 0) return '';
-    return (cards[cards.length - 1].innerText || cards[cards.length - 1].textContent || '').trim();
+  return page.evaluate(cardSel => {
+    const cards = document.querySelectorAll(cardSel);
+    if (cards.length === 0) return { text: '', thinking: '', attachments: [], url: location.href };
+    const last = cards[cards.length - 1];
+
+    // 1) 抓附件
+    const attachments = [...last.querySelectorAll('.report-file-item')].map(item => ({
+      name: (item.querySelector('.file-name')?.textContent || '').trim(),
+      size: (item.querySelector('.file-size')?.textContent || '').trim(),
+      type: item.className.includes('html-report') ? 'html' : 'unknown',
+    }));
+
+    // 2) 分类 .qk-markdown：思考过程 vs 最终答案
+    const allMd = [...last.querySelectorAll('.qk-markdown')];
+    const isInThinking = el => !!el.closest('[data-card_name="deep_think"], [class*="thinkingContent"]');
+    const thinkingMds = allMd.filter(isInThinking);
+    const answerMds = allMd.filter(el => !isInThinking(el));
+
+    function cleanText(root) {
+      const clone = root.cloneNode(true);
+      // 移除多模态卡片装饰（报告卡片、追问按钮）
+      clone.querySelectorAll([
+        '.qk-md-has-multi-modal .mos-agent-module',
+        '.mos-chat-card',
+        '[data-c="mos_q_closely"]',
+        '[data-c="result_card"]',
+      ].join(',')).forEach(el => el.remove());
+      return (clone.innerText || clone.textContent || '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
+
+    // 最终答案：优先取 answerMds 拼接；没有则回退到 thinkingMds
+    let text;
+    if (answerMds.length > 0) {
+      text = answerMds.map(cleanText).filter(Boolean).join('\n\n');
+    } else if (thinkingMds.length > 0) {
+      text = cleanText(thinkingMds[thinkingMds.length - 1]);
+    } else {
+      // 兜底：整个 card 的 innerText（去掉报告卡片）
+      text = cleanText(last);
+    }
+
+    const thinking = thinkingMds.map(cleanText).filter(Boolean).join('\n\n');
+
+    return { text, thinking, attachments, url: location.href };
   }, ANSWER_CARD_SELECTOR);
 }
 
@@ -258,8 +314,8 @@ export async function askQianwen(message, options = {}) {
 
     if (screenshot) await page.screenshot({ path: `qianwen-${mode}-reply.png`, fullPage: true });
 
-    const reply = await extractLastReply(page);
-    return { reply, url: page.url(), mode };
+    const { text, thinking, attachments } = await extractLastReply(page);
+    return { reply: text, thinking, attachments, url: page.url(), mode };
   } finally {
     await page.close();
     await browser.disconnect();
@@ -296,6 +352,8 @@ export async function createQianwenChat(options = {}) {
   // 首次激活初始模式
   await setQianwenMode(page, initialMode);
   let currentMode = initialMode;
+  let lastAttachments = [];
+  let lastThinking = '';
 
   return {
     page,
@@ -337,7 +395,16 @@ export async function createQianwenChat(options = {}) {
 
       await waitForQianwenReply(page, { timeoutMs: waitTimeoutMs, stableMs, priorCount });
 
-      return extractLastReply(page);
+      const { text, thinking, attachments } = await extractLastReply(page);
+      lastAttachments = attachments;
+      lastThinking = thinking;
+      return text;
+    },
+    getLastAttachments() {
+      return lastAttachments;
+    },
+    getLastThinking() {
+      return lastThinking;
     },
     async close() {
       await page.close();

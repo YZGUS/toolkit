@@ -69,9 +69,13 @@ fi
 rm -f "$DEBUG_PROFILE/Singleton"* 2>/dev/null || true
 
 echo "🚀 启动 Chrome（调试端口 $DEBUG_PORT）..."
+# Chrome 127+ 的 App-Bound Encryption 会让跨路径复制的 cookie 失效
+# 通过 --disable-features 关闭 LockProfileCookieDatabase，让仍是 v10 的 cookie 可用
+# 仍然 v20 加密的 cookie 副本里读不出，需在副本里手动登录一次
 "$CHROME_PATH" \
   --remote-debugging-port=$DEBUG_PORT \
   --user-data-dir="$DEBUG_PROFILE" \
+  --disable-features=LockProfileCookieDatabase,EncryptedClientHello \
   --no-first-run \
   --no-default-browser-check \
   > /dev/null 2>&1 &
