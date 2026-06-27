@@ -4,7 +4,7 @@
 
 - **chrome**：连接真实 Chrome 进程（保留登录态），支持 Cookie 在线同步
 - **grok**：Grok Web 对话自动化
-- **qianwen**：千问（qianwen.com）Web 对话自动化
+- **qianwen**：千问（qianwen.com）Web 对话自动化，支持 **任务助理 / 研究 / 思考** 模式
 - **utils**：通用工具（DOM 稳定等待、SPA 渲染等待）
 
 ## 目录结构
@@ -33,7 +33,9 @@ toolkit/
     ├── grok-multi-turn.mjs           # Grok 多轮对话
     ├── grok-long-conversation.mjs    # Grok 长上下文记忆测试
     ├── grok-resume.mjs               # Grok 可恢复会话
-    └── qianwen-multi-turn.mjs        # 千问多轮对话
+    ├── qianwen-multi-turn.mjs        # 千问多轮对话
+    ├── qianwen-research.mjs          # 千问研究模式（每天 10 次）
+    └── qianwen-task.mjs              # 千问任务助理（每天 20 次）
 ```
 
 ## 安装
@@ -62,9 +64,17 @@ npm install
 node bin/grok-ask.mjs "用一句话介绍你自己"
 node bin/grok-ask.mjs --screenshot "解释量子计算"
 
-# 千问
+# 千问（默认模式）
 node bin/qianwen-ask.mjs "用一句话介绍你自己"
-node bin/qianwen-ask.mjs --screenshot "解释量子计算"
+
+# 千问 - 任务助理模式（每天 20 次）
+node bin/qianwen-ask.mjs --mode=task "帮我规划本周学习计划"
+
+# 千问 - 研究模式（每天 10 次，回复较慢可能 1-5 分钟）
+node bin/qianwen-ask.mjs --mode=research --timeout=600000 "近三年新能源车竞争格局"
+
+# 千问 - 思考模式
+node bin/qianwen-ask.mjs --mode=think "推理一下：A>B, B>C，A 与 C 的关系？"
 ```
 
 ### 3. 编程方式使用
@@ -72,31 +82,32 @@ node bin/qianwen-ask.mjs --screenshot "解释量子计算"
 ```js
 import {
   askGrok, createGrokChat,
-  askQianwen, createQianwenChat,
+  askQianwen, createQianwenChat, QIANWEN_MODES,
   connectChrome,
 } from '@cengyi/toolkit';
 
 // Grok 单轮
 const { reply } = await askGrok('你好');
 
-// 千问多轮
-const chat = await createQianwenChat();
+// 千问 - 研究模式（每天 10 次）
+const r = await askQianwen('近三年新能源车竞争格局', { mode: 'research' });
+console.log(r.reply);
+
+// 千问 - 任务助理模式（每天 20 次）
+await askQianwen('帮我做本周计划', { mode: 'task' });
+
+// 千问多轮，支持中途切换模式
+const chat = await createQianwenChat({ mode: 'default' });
 await chat.send('我叫小明');
-const r = await chat.send('我刚才说我叫什么？');
-const url = chat.getUrl();          // 保存会话 URL 以便日后恢复
+await chat.setMode('research');
+await chat.send('调研一下我感兴趣的话题');
+const url = chat.getUrl();
 await chat.close();
 
-// 恢复同一会话（Grok / 千问 均支持）
+// 恢复同一会话
 const chat2 = await createQianwenChat({ conversationUrl: url });
 await chat2.send('继续聊...');
 await chat2.close();
-
-// 自定义页面操作
-const { browser } = await connectChrome();
-const page = await browser.newPage();
-await page.goto('https://github.com');
-await page.close();
-await browser.disconnect();
 ```
 
 ## 核心原理
@@ -143,10 +154,32 @@ Grok 和千问的 `createXxxChat()` 都采用相同模式：
 - Grok：DOM 稳定（`waitForDomStable`）
 - 千问：DOM 标记 `.qk-markdown-complete` + 稳定法兜底
 
+### 千问模式切换
+
+千问输入框上方有一排「胶囊按钮」（capsule），如：任务助理 / 思考 / 研究 / 千问高考 / PPT 创作 / AI 生视频 / 更多。
+
+- DOM 中实际有两份：`[data-role="visible-capsule"]`（实际可点）和 `[data-role="measure-capsule"]`（仅用于度量布局）—— 自动化必须用前者
+- 通过 `aria-pressed="true"|"false"` 标识激活状态
+- 同一时刻只能激活一个模式（点新的会替换旧的）
+
+`setQianwenMode(page, mode)` 封装了这些细节，支持的模式：
+
+| mode 值 | 名称 | 每日限额 | 默认超时 |
+|---|---|---|---|
+| `default` | 普通 | 不限 | 120s |
+| `task` | 任务助理 | 20 次/天 | 600s |
+| `research` | 研究 | 10 次/天 | 900s |
+| `think` | 思考 | - | 240s |
+
+调用 `askQianwen(msg, { mode: 'research' })` 或 `chat.setMode('task')` 即可。
+
 ## 已验证可工作
 
 - ✅ Grok Web 自动对话（单轮 / 多轮 / 恢复会话）
 - ✅ 千问 Web 自动对话（单轮 / 多轮）
+- ✅ 千问 **任务助理** 模式（每天 20 次，已实测 ~90s 完成简单任务）
+- ✅ 千问 **研究** 模式（每天 10 次，支持长达 15 分钟的等待）
+- ✅ 千问 **思考** 模式
 - ✅ GitHub 等已登录站点自动化
 - ✅ 多站点登录态复用
 - ✅ 真实 Chrome 同时运行不受影响
